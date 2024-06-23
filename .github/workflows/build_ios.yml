@@ -1,0 +1,66 @@
+name: "Build IOS & Deploy"
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    build-capacitor:
+        runs-on: macos-latest
+
+        defaults:
+            run:
+                shell: bash
+        steps:
+            - name: check Xcode version
+              run: /usr/bin/xcodebuild -version
+            - name: Checkout code
+              uses: actions/checkout@v4
+            - name: Install Apple certificate and provisiong profile
+              env:
+                  BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_DEV_BASE64 }}
+                  P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+                  BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_DEV_BASE64 }}
+                  KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+              run: |
+                  # create variables
+                  CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+                  PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
+                  KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+                  # import certificate and provisioning profile from secrets
+                  echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+                  echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
+
+                  # create temporary keychain
+                  security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+                  security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+                  security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+                  # import certificate to keychain
+                  security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+                  security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+                  security list-keychain -d user -s $KEYCHAIN_PATH
+
+                  # apply provisioning profile
+                  mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+                  cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
+            - name: Install Java
+              uses: actions/setup-java@v4
+              with:
+                  distribution: "oracle"
+                  java-version: "21"
+            - name: Install dependencies
+              uses: gradle/actions/setup-gradle@v3
+            - run: npm install
+            - run: chmod +x ./src-capacitor/android/gradlew
+            - run: npm run info
+            - name: Building IPK
+              run: npm run ios
+            - name: Clean up keychain and provisioning profile
+              if: ${{ always() }}
+              run: |
+                  security delete-keychain $RUNNER_TEMP/app-signing.keychain-db
+                  rm ~/Library/MobileDevice/Provisioning\ Profiles/build_pp.mobileprovision

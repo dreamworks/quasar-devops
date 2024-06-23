@@ -1,0 +1,37 @@
+name: "Build Android & Deploy"
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    build-capacitor:
+        runs-on: ubuntu-latest
+
+        defaults:
+            run:
+                shell: bash
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+            - name: Install Java
+              uses: actions/setup-java@v4
+              with:
+                  distribution: "oracle"
+                  java-version: "21"
+            - name: Install dependencies
+              uses: gradle/actions/setup-gradle@v3
+            - run: npm install
+            - run: chmod +x ./src-capacitor/android/gradlew
+            - run: npm run android
+            - run: zip -j ./App-apk.zip ./src-capacitor/android/app/build/outputs/apk/release/*
+            - name: Publish
+              uses: nogsantos/scp-deploy@master
+              with:
+                  src: ./App-apk.zip
+                  host: my.app.de
+                  remote: /data/www/my-app
+                  user: root
+                  key: ${{ secrets.SSH_KEY }}
